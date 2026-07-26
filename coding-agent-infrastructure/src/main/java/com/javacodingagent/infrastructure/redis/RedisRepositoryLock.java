@@ -1,0 +1,3 @@
+package com.javacodingagent.infrastructure.redis;
+import com.javacodingagent.core.port.RepositoryLock; import org.springframework.data.redis.core.StringRedisTemplate; import java.time.Duration;
+public class RedisRepositoryLock implements RepositoryLock { private final StringRedisTemplate redis; public RedisRepositoryLock(StringRedisTemplate redis) { this.redis = redis; } public boolean tryAcquire(long repositoryId, String owner, Duration ttl) { return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key(repositoryId), owner, ttl)); } public void release(long repositoryId, String owner) { String key = key(repositoryId); if (owner.equals(redis.opsForValue().get(key))) redis.delete(key); } private String key(long id) { return "coding-agent:repository-lock:" + id; } }

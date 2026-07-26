@@ -1,0 +1,3 @@
+package com.javacodingagent.infrastructure;
+import org.junit.jupiter.api.Test; import org.testcontainers.containers.GenericContainer; import org.testcontainers.containers.MySQLContainer; import org.testcontainers.junit.jupiter.Container; import org.testcontainers.junit.jupiter.Testcontainers; import static org.junit.jupiter.api.Assertions.*;
+@Testcontainers(disabledWithoutDocker = true) class ExternalServicesContainerTest { @Container static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4"); @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7.4-alpine").withExposedPorts(6379); @Test void startsRequiredPersistenceServices() { assertTrue(MYSQL.isRunning()); assertTrue(REDIS.isRunning()); } }

@@ -1,0 +1,4 @@
+package com.javacodingagent.tools;
+import java.util.regex.*;
+/** Parses Maven Surefire summaries into stable counters. */
+public class TestResultParser { private static final Pattern SUMMARY = Pattern.compile("Tests run: (\\d+), Failures: (\\d+), Errors: (\\d+), Skipped: (\\d+)"); public TestResult parse(int exitCode, String output) { Matcher matcher = SUMMARY.matcher(output == null ? "" : output); int total=0, failures=0, errors=0, skipped=0; while (matcher.find()) { total=Integer.parseInt(matcher.group(1)); failures=Integer.parseInt(matcher.group(2)); errors=Integer.parseInt(matcher.group(3)); skipped=Integer.parseInt(matcher.group(4)); } return new TestResult(exitCode == 0 ? "PASSED" : "FAILED", total, total-failures-errors-skipped, failures+errors, skipped, exitCode); } public record TestResult(String status, int totalTests, int passedTests, int failedTests, int skippedTests, int exitCode) { } }

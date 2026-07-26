@@ -1,0 +1,6 @@
+.m2-repository/
+**/target/
+.idea/
+*.iml
+workspaces/
+.env
