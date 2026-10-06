@@ -1,10 +1,12 @@
 package com.javacodingagent.tools;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 
 /** Allows only Maven, approved read-only Git commands and java version checks. */
 public class CommandTools {
@@ -12,8 +14,9 @@ public class CommandTools {
  public CommandTools(WorkspaceGuard guard, Duration timeout) { this.guard = guard; this.timeout = timeout; }
  public ToolResult<Map<String, Object>> execute(String command) { long started = System.currentTimeMillis(); try {
    List<String> args = validate(command); List<String> processArgs = platformCommand(args); Process process = new ProcessBuilder(processArgs).directory(guard.root().toFile()).redirectErrorStream(true).start();
+   CompletableFuture<String> outputReader = CompletableFuture.supplyAsync(() -> readOutput(process));
    boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS); if (!finished) { process.destroyForcibly(); return ToolResult.failure("MavenTool", "COMMAND_TIMEOUT", "Command exceeded " + timeout, started); }
-   String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8); if (output.length() > 20_000) output = output.substring(0, 20_000) + "\n[truncated]";
+   String output = outputReader.join();
    return ToolResult.success(toolName(args), "command completed", Map.of("command", String.join(" ", args), "exitCode", process.exitValue(), "output", output), started);
  } catch (Exception e) { return ToolResult.failure("CommandTool", "COMMAND_REJECTED", e.getMessage(), started); } }
  private List<String> validate(String command) {
@@ -25,5 +28,6 @@ public class CommandTools {
    if (!maven && !git && !javaVersion) throw new SecurityException("Command is not on the allowlist"); return args;
  }
  private String toolName(List<String> args) { return args.get(0).startsWith("git") ? "GitTool" : args.get(0).equals("java") ? "JavaVersionTool" : "MavenTool"; }
+ private String readOutput(Process process) { try (var reader = process.inputReader(StandardCharsets.UTF_8)) { char[] buffer = new char[4096]; StringBuilder output = new StringBuilder(); boolean truncated = false; int count; while ((count = reader.read(buffer)) != -1) { int remaining = 20_000 - output.length(); if (remaining > 0) output.append(buffer, 0, Math.min(count, remaining)); if (count > remaining) truncated = true; } return truncated ? output + "\n[truncated]" : output.toString(); } catch (IOException e) { throw new UncheckedIOException(e); } }
  private List<String> platformCommand(List<String> args) { if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win") && Set.of("mvn", "mvnw", "./mvnw").contains(args.get(0).toLowerCase(Locale.ROOT))) { var result = new ArrayList<String>(); result.add("cmd"); result.add("/c"); result.addAll(args); return result; } return args; }
 }

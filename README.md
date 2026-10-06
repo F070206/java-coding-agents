@@ -100,6 +100,16 @@ mvn -s .mvn/settings.xml -pl coding-agent-bootstrap -am spring-boot:run
 http://localhost:8080/swagger-ui.html
 ```
 
+### Windows 离线兜底与前端
+
+复制 `.env.example` 为根目录下的 `.env`，填写 `ADMIN_PASSWORD` 和至少 32 字节的 `JWT_SECRET`。如需保存模型密钥，可填写 `LLM_API_KEY`；`.env` 已被 Git 忽略。然后在 PowerShell 中运行：
+
+```powershell
+.\run-offline.ps1
+```
+
+脚本会强制清空模型地址和模型名称，因此始终使用确定性离线模型，不向模型服务发送请求。启动后访问 `http://localhost:8080/`，使用 `.env` 中的管理员账号登录，添加本机已存在的仓库路径，再提交任务查看测试结果和轨迹。离线模型不会提出文件修改；任务会对所选仓库执行 `mvn test`。仓库与任务记录当前保存在内存中，重启后需要重新添加。
+
 ## 配置项
 
 | 环境变量 | 说明 |
@@ -180,4 +190,3 @@ curl -X POST http://localhost:8080/api/agent/tasks \
 - Prometheus / Grafana Dashboard
 - 更多编程语言解析器
 - Git worktree 隔离
-
