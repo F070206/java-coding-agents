@@ -110,6 +110,10 @@ http://localhost:8080/swagger-ui.html
 
 脚本会强制清空模型地址和模型名称，因此始终使用确定性离线模型，不向模型服务发送请求。启动后访问 `http://localhost:8080/`，使用 `.env` 中的管理员账号登录，添加本机已存在的仓库路径，再提交任务查看测试结果和轨迹。离线模型不会提出文件修改；任务会对所选仓库执行 `mvn test`。仓库与任务记录当前保存在内存中，重启后需要重新添加。
 
+侧栏底部的“界面主题”支持浅色、深色和跟随系统，登录前后均可切换。主题选择保存在当前浏览器中，刷新后保留；跟随系统会响应系统外观变化。浏览器禁用本地存储时，仍可在当前页面切换主题。
+
+页面运行模式读取自 `/api/health` 的 `mode` 字段（`OFFLINE` / `ONLINE`，不包含密钥）。任务查询返回实时 `status` 以及可选的 `stopReason`、`message`，供页面展示执行阶段和停止原因；异常内容不会直接暴露到接口。
+
 ## 配置项
 
 | 环境变量 | 说明 |
@@ -178,6 +182,12 @@ curl -X POST http://localhost:8080/api/agent/tasks \
 ## 测试范围
 
 项目包含 AST/RAG、状态机、自动修复策略、路径穿越防护、命令白名单、文件回滚、Trace 和 JWT 等测试。未配置 API Key 时不会访问模型；依赖外部服务的 Testcontainers 测试可在 Docker 可用时运行。
+
+前端回归测试使用 Node.js 18+ 内置测试运行器，无需安装 npm 依赖，覆盖主题持久化、异步表单提交、登录失效和任务轮询：
+
+```bash
+node --test coding-agent-bootstrap/src/test/javascript/app.test.cjs
+```
 
 ## 架构决策
 
