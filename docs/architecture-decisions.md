@@ -29,3 +29,10 @@ Build descriptors, migrations, authentication/security files and changes exceedi
 
 ## ADR-010: trace failure isolation
 Tools are traced by a decorator and trace persistence errors are swallowed at the execution boundary. Trace records observable plans/actions/results only, never hidden model reasoning.
+
+## ADR-011: live workspace tools replace RAG in task execution
+Supersedes ADR-005 and ADR-006 for the main execution path. The engine no longer scans Java ASTs, chunks source, builds an index or retrieves cached snippets. It plans from a bounded file inventory and runs a model-selected `WorkspaceAction` loop: list, literal search, read, create/patch, and finish. Each tool reads current files; repair rounds start with fresh observations and the previous structured test error. The original analysis/RAG modules remain standalone libraries without a core dependency.
+
+Changes reuse `FileTools`, snapshots and risk checks. Existing files must be read before patching, failed edits are returned to the model, and unresolved edit failures cannot finish the round. The ten-file confirmation threshold is cumulative across actions and repair rounds. Paths are relative to the real workspace root; symbolic links, credential paths, Git internals and snapshots cannot be accessed by model tools. Discovery prunes common generated/dependency directories; it does not implement `.gitignore` pattern matching.
+
+Each round allows at most 40 model-selected actions. File/search output and observation history are bounded; large/binary files are reported as skipped, and truncated results direct the model to narrow its request. `FINISH` only requests validation; the engine still runs `git diff` and `mvn test` before reporting success. Legacy model adapters can use the default single-proposal bridge, while the online adapter chooses actions from actual tool observations. Legacy `INDEXING`, `RETRIEVING` statuses and `symbolsToRetrieve` remain for compatibility but are unused by the new online workflow.

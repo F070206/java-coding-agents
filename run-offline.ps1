@@ -23,7 +23,8 @@ Push-Location $projectRoot
 try {
     & mvn -s .mvn/settings.xml -pl coding-agent-bootstrap -am -DskipTests package
     if ($LASTEXITCODE -ne 0) { throw 'Maven build failed.' }
-    & java -jar coding-agent-bootstrap/target/coding-agent-bootstrap-0.1.0-SNAPSHOT.jar
+    $jarPath = Join-Path $projectRoot 'coding-agent-bootstrap/target/coding-agent-bootstrap-0.1.0-SNAPSHOT.jar'
+    & java -jar $jarPath
     if ($LASTEXITCODE -ne 0) { throw 'Application stopped with an error.' }
 } finally {
     Pop-Location

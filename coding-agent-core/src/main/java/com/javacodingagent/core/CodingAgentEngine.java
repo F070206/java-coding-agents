@@ -1,31 +1,88 @@
 package com.javacodingagent.core;
 
-import com.javacodingagent.analysis.*; import com.javacodingagent.common.domain.*; import com.javacodingagent.core.llm.CodingModel; import com.javacodingagent.core.model.*; import com.javacodingagent.rag.*; import com.javacodingagent.tools.*; import com.javacodingagent.trace.*;
-import java.nio.file.*; import java.time.*; import java.util.*; import java.util.concurrent.atomic.AtomicLong;
+import com.javacodingagent.common.domain.*;
+import com.javacodingagent.core.llm.CodingModel;
+import com.javacodingagent.core.model.*;
 import com.javacodingagent.core.repair.SelfRepairPolicy;
+import com.javacodingagent.core.state.AgentStateMachine;
+import com.javacodingagent.tools.*;
+import com.javacodingagent.trace.*;
+import java.nio.file.*;
+import java.time.*;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
-/** Executes the auditable scan-index-plan-retrieve-edit-test-repair workflow for one repository. */
+/** Executes a live workspace plan-tool-test-repair workflow without a code index. */
 public class CodingAgentEngine {
- private final CodingModel model; private final TraceStore traces; private final AtomicLong sequence = new AtomicLong();
- public CodingAgentEngine(CodingModel model, TraceStore traces) { this.model = model; this.traces = traces; }
+ private final CodingModel model;
+ private final TraceStore traces;
+ private final AtomicLong sequence = new AtomicLong();
+ private final Function<WorkspaceGuard, CommandTools> commandFactory;
+ public CodingAgentEngine(CodingModel model, TraceStore traces) {
+  this(model, traces, guard -> new CommandTools(guard, Duration.ofMinutes(5)));
+ }
+ CodingAgentEngine(CodingModel model, TraceStore traces, Function<WorkspaceGuard, CommandTools> commandFactory) {
+  this.model = model; this.traces = traces; this.commandFactory = commandFactory;
+ }
  public Result execute(AgentExecutionContext context, String requirement, int maxRepairs) throws Exception {
   return execute(context, requirement, maxRepairs, status -> { });
  }
  public Result execute(AgentExecutionContext context, String requirement, int maxRepairs, Consumer<AgentTaskStatus> onStatus) throws Exception {
-  Consumer<AgentTaskStatus> transition = status -> { context.setTaskStatus(status); onStatus.accept(status); };
-  Path root = Path.of(context.getRepositoryPath()); var guard = new WorkspaceGuard(root); var fileTools = new FileTools(guard, root.resolve(".agent-snapshots").resolve(context.getTraceId())); var commands = new CommandTools(guard, Duration.ofMinutes(5));
-  transition.accept(AgentTaskStatus.SCANNING); var profile = new RepositoryScanner().scan(root); trace(context, "REPOSITORY_SCANNED", profile.toString());
-  transition.accept(AgentTaskStatus.INDEXING); var store = new InMemoryCodeIndexStore(); int changed = new IncrementalCodeIndexer(new JavaSourceAnalyzer(), new CodeChunker(), store).index(String.valueOf(context.getTaskId()), "root", root); trace(context, "INDEX_COMPLETED", changed + " files indexed");
-  transition.accept(AgentTaskStatus.PLANNING); List<String> initial = store.all(String.valueOf(context.getTaskId())).stream().limit(20).map(c -> c.filePath() + "\n" + c.content()).toList(); TaskPlan plan = model.plan(requirement, initial); trace(context, "PLAN_CREATED", plan.toString());
-  transition.accept(AgentTaskStatus.RETRIEVING); var retriever = new HybridCodeRetriever(store); List<String> retrieved = plan.symbolsToRetrieve().stream().flatMap(q -> retriever.search(String.valueOf(context.getTaskId()), q, 5).stream()).distinct().map(r -> r.chunk().filePath() + "\n" + r.chunk().content()).limit(30).toList();
-  StructuredError error = null; var policy = new SelfRepairPolicy(maxRepairs); for (int round = 0; round <= maxRepairs; round++) { context.setCurrentRepairRound(round); transition.accept(round == 0 ? AgentTaskStatus.EXECUTING : AgentTaskStatus.REPAIRING); ChangeProposal proposal = model.proposeChanges(plan, retrieved, error); if (proposal.requiresConfirmation() || risky(proposal)) { transition.accept(AgentTaskStatus.WAITING_CONFIRMATION); trace(context, "WAITING_CONFIRMATION", "Risk-sensitive change requires approval"); return new Result(context.getTaskStatus(), AgentStopReason.HUMAN_CONFIRMATION_REQUIRED, plan); }
-   for (FileEdit edit : proposal.edits()) { ToolResult<String> result = edit.operation() == FileEdit.Operation.CREATE ? fileTools.create(edit.filePath(), edit.content()) : fileTools.patch(edit.filePath(), edit.expected(), edit.replacement()); trace(context, "FILE_CHANGED", result.summary()); if (!result.success()) throw new IllegalStateException(result.errorMessage()); }
-   transition.accept(AgentTaskStatus.REVIEWING); var diff = commands.execute("git diff"); trace(context, "DIFF_REVIEWED", diff.summary()); transition.accept(AgentTaskStatus.TESTING); var test = commands.execute("mvn test"); int exit = test.data() == null ? -1 : (Integer)test.data().get("exitCode"); trace(context, exit == 0 ? "TEST_PASSED" : "TEST_FAILED", test.summary()); if (exit == 0) { transition.accept(AgentTaskStatus.SUCCEEDED); return new Result(context.getTaskStatus(), AgentStopReason.TEST_PASSED, plan); }
-   error = model.analyzeError(String.valueOf(test.data())); var decision = policy.evaluate(round, Integer.toHexString(error.hashCode()), String.valueOf(diff.data()).hashCode() + "", false, false, false); if (!decision.continueRepair()) { transition.accept(AgentTaskStatus.FAILED); return new Result(context.getTaskStatus(), decision.stopReason(), plan); }
-  } transition.accept(AgentTaskStatus.FAILED); return new Result(context.getTaskStatus(), AgentStopReason.MAX_REPAIR_ATTEMPTS_REACHED, plan);
+  var stateMachine = new AgentStateMachine();
+  Consumer<AgentTaskStatus> transition = status -> {
+   stateMachine.requireTransition(context.getTaskStatus(), status);
+   context.setTaskStatus(status); onStatus.accept(status);
+  };
+  var guard = new WorkspaceGuard(Path.of(context.getRepositoryPath()));
+  var fileTools = new FileTools(guard, guard.root().resolve(".agent-snapshots").resolve(context.getTraceId()));
+  var commands = commandFactory.apply(guard);
+  transition.accept(AgentTaskStatus.SCANNING);
+  var inventory = new WorkspaceTools(guard).list(".", null);
+  if (!inventory.success()) throw new IllegalStateException(inventory.errorCode());
+  trace(context, "REPOSITORY_SCANNED", inventory.summary());
+  transition.accept(AgentTaskStatus.PLANNING);
+  TaskPlan plan = model.plan(requirement, List.of("Live workspace files (no code index): " + inventory.summary() + "\n" + inventory.data()));
+  if (plan == null) throw new IllegalStateException("MODEL_DECISION_FAILED");
+  trace(context, "PLAN_CREATED", plan.toString());
+  var session = new WorkspaceSession(model, guard, fileTools, (type, summary) -> trace(context, type, summary));
+  StructuredError error = null; var policy = new SelfRepairPolicy(maxRepairs);
+  for (int round = 0; round <= maxRepairs; round++) {
+   context.setCurrentRepairRound(round);
+   transition.accept(round == 0 ? AgentTaskStatus.EXECUTING : AgentTaskStatus.REPAIRING);
+   var outcome = session.run(plan, error);
+   if (outcome == WorkspaceSession.Outcome.WAITING_CONFIRMATION) {
+    transition.accept(AgentTaskStatus.WAITING_CONFIRMATION);
+    trace(context, "WAITING_CONFIRMATION", "Risk-sensitive change requires approval");
+    return new Result(context.getTaskStatus(), AgentStopReason.HUMAN_CONFIRMATION_REQUIRED, plan);
+   }
+   if (outcome == WorkspaceSession.Outcome.LIMIT_REACHED) {
+    transition.accept(AgentTaskStatus.FAILED);
+    return new Result(context.getTaskStatus(), AgentStopReason.CONTEXT_LIMIT_REACHED, plan);
+   }
+   transition.accept(AgentTaskStatus.REVIEWING);
+   var diff = commands.execute("git diff"); trace(context, "DIFF_REVIEWED", diff.summary());
+   transition.accept(AgentTaskStatus.TESTING);
+   var test = commands.execute("mvn test");
+   int exit = test.success() && test.data() != null ? (Integer)test.data().get("exitCode") : -1;
+   trace(context, exit == 0 ? "TEST_PASSED" : "TEST_FAILED", test.summary());
+   if (exit == 0) {
+    transition.accept(AgentTaskStatus.SUCCEEDED);
+    return new Result(context.getTaskStatus(), AgentStopReason.TEST_PASSED, plan);
+   }
+   error = model.analyzeError(test.success() ? String.valueOf(test.data()) : test.errorCode() + ": " + test.errorMessage());
+   var decision = policy.evaluate(round, Integer.toHexString(error.hashCode()), String.valueOf(diff.data()).hashCode() + "", false, false, false);
+   if (!decision.continueRepair()) {
+    transition.accept(AgentTaskStatus.FAILED);
+    return new Result(context.getTaskStatus(), decision.stopReason(), plan);
+   }
+  }
+  transition.accept(AgentTaskStatus.FAILED);
+  return new Result(context.getTaskStatus(), AgentStopReason.MAX_REPAIR_ATTEMPTS_REACHED, plan);
  }
- private void trace(AgentExecutionContext c, String type, String summary) { traces.append(new TraceEvent(c.getTraceId(), c.getTaskId(), sequence.incrementAndGet(), type, "SUPERVISOR", summary, Map.of("status", c.getTaskStatus().name()), Instant.now())); }
- private boolean risky(ChangeProposal proposal) { if (proposal.edits().size() > 10) return true; return proposal.edits().stream().map(FileEdit::filePath).map(String::toLowerCase).anyMatch(path -> path.endsWith("pom.xml") || path.contains("migration") || path.contains("security") || path.contains("auth")); }
+ private void trace(AgentExecutionContext c, String type, String summary) {
+  traces.append(new TraceEvent(c.getTraceId(), c.getTaskId(), sequence.incrementAndGet(), type, "SUPERVISOR", summary, Map.of("status", c.getTaskStatus().name()), Instant.now()));
+ }
  public record Result(AgentTaskStatus status, AgentStopReason stopReason, TaskPlan plan) { }
 }

@@ -4,6 +4,9 @@
 *.iml
 workspaces/
 .env
+.env.*
+!.env.example
+**/.agent-snapshots/
 *.class
 *.log
 *.ctxt

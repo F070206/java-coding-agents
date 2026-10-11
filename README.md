@@ -1,13 +1,13 @@
 # Java Coding Agents
 
-基于 Java 17、Spring Boot 3、LangChain4j 与 JavaParser 构建的 Java 编程智能体。它面向真实 Maven 仓库，提供代码扫描、增量索引、结构化规划、代码检索、安全文件修改、Git Diff、测试、自修复和执行轨迹查询等能力。
+基于 Java 17、Spring Boot 3 与 LangChain4j 构建的 Java 编程智能体。它面向真实 Maven 仓库，直接列出、搜索、读取和修改工作区文件，提供结构化规划、Git Diff、测试、自修复和执行轨迹查询等能力，任务执行不再建立或保存代码 RAG 索引。
 
 ## 核心能力
 
-- **代码分析**：通过 JavaParser 提取类、接口、枚举、方法、构造器和字段等 AST 符号。
-- **Code RAG**：按语义符号切片，基于 SHA-256 建立增量索引，并支持路径、符号和关键词的混合检索。
+- **直接操作代码**：模型根据工具反馈循环选择列文件、文本搜索、按行读取、创建文件或精确替换，无需预先切片和入库，支持 Java 及其他 UTF-8 文本文件。
+- **实时上下文**：每次工具调用都读取当前工作区，修复轮次重新获取文件内容；JavaParser 和旧 RAG 模块作为独立库保留，主执行链路不再依赖它们。
 - **工具调用**：统一使用结构化 `ToolResult`，提供受控文件读写、局部 Patch、只读 Git/Maven 命令和任务快照。
-- **自动修复**：测试失败后解析结构化错误，重新检索、修改并测试；支持最大轮次、重复错误、无效变更和危险操作等停止条件。
+- **自动修复**：测试失败后解析结构化错误，重新搜索、读取、修改并测试；支持最大轮次、重复错误、无效变更和工具步数等停止条件。
 - **执行追踪**：以 `traceId`、`taskId` 和 `sessionId` 关联计划、工具、文件、测试与修复事件，不保存模型隐藏推理。
 - **安全控制**：限制工作区路径与可执行命令，敏感文件和高风险变更进入人工确认流程。
 
@@ -16,9 +16,8 @@
 ```mermaid
 flowchart LR
   API["REST / SSE / JWT"] --> CORE["CodingAgentEngine"]
-  CORE --> ANALYSIS["JavaParser Analysis"]
-  CORE --> RAG["Code RAG / Milvus Port"]
-  CORE --> TOOLS["Safe File / Git / Maven Tools"]
+  CORE --> TOOLS["Live List / Search / Read / Edit / Git / Maven Tools"]
+  TOOLS --> WORKSPACE["Repository Files"]
   CORE --> TRACE["Trace Decorator"]
   CORE --> LLM["LangChain4j / OpenAI Compatible"]
   TRACE --> MYSQL[("MySQL")]
@@ -31,15 +30,14 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
   PENDING --> SCANNING
-  SCANNING --> INDEXING
-  INDEXING --> PLANNING
-  PLANNING --> RETRIEVING
-  RETRIEVING --> EXECUTING
+  SCANNING --> PLANNING
+  PLANNING --> EXECUTING
+  EXECUTING --> EXECUTING: list / search / read / edit
   EXECUTING --> REVIEWING
   REVIEWING --> TESTING
   TESTING --> SUCCEEDED: tests pass
   TESTING --> REPAIRING: tests fail
-  REPAIRING --> RETRIEVING
+  REPAIRING --> REVIEWING: fresh file tools
   EXECUTING --> WAITING_CONFIRMATION: risky change
 ```
 
@@ -50,9 +48,9 @@ stateDiagram-v2
 | `coding-agent-bootstrap` | 应用启动、Bean 装配、JWT/Security、Metrics 和配置 |
 | `coding-agent-api` | REST、SSE、DTO、参数校验与异常处理 |
 | `coding-agent-core` | Supervisor、规划/编码模型、状态机和自动修复 |
-| `coding-agent-analysis` | Maven 仓库扫描与 JavaParser AST 符号分析 |
-| `coding-agent-rag` | 语义切片、增量索引与混合检索 |
-| `coding-agent-tools` | 安全文件、Git、Maven、快照和回滚工具 |
+| `coding-agent-analysis` | 独立的 Maven 扫描与 JavaParser 分析库，主流程不依赖 |
+| `coding-agent-rag` | 保留的旧索引/检索库，主流程不依赖 |
+| `coding-agent-tools` | 实时列文件、文本搜索、按行读取、安全修改、Git、Maven、快照和回滚工具 |
 | `coding-agent-trace` | 结构化 Trace 与异步写入 |
 | `coding-agent-infrastructure` | LangChain4j、MySQL、Redis、RocketMQ 和 JGit 适配 |
 | `coding-agent-common` | 公共领域对象与 API 响应模型 |
@@ -107,6 +105,10 @@ http://localhost:8080/swagger-ui.html
 ```powershell
 .\run-offline.ps1
 ```
+
+Windows 下也可以双击根目录的 `start.cmd` 一键构建并启动；首次使用仍需先按上文配置 `.env`。脚本会打开独立命令窗口并保留启动日志；应用运行期间不要关闭该窗口。
+
+若要从另一个窗口关闭已启动的应用，双击根目录的 `stop.cmd`。脚本只会停止监听配置端口且命令行匹配本项目 JAR 的 Java 进程；停止结果会保留在独立命令窗口中。
 
 脚本会强制清空模型地址和模型名称，因此始终使用确定性离线模型，不向模型服务发送请求。启动后访问 `http://localhost:8080/`，使用 `.env` 中的管理员账号登录，添加本机已存在的仓库路径，再提交任务查看测试结果和轨迹。离线模型不会提出文件修改；任务会对所选仓库执行 `mvn test`。仓库与任务记录当前保存在内存中，重启后需要重新添加。
 
@@ -169,19 +171,21 @@ curl -X POST http://localhost:8080/api/agent/tasks \
 
 ## 自动修复示例
 
-`examples/sample-user-service` 是一个可独立测试的示例服务。真实模型返回结构化 `ChangeProposal`，引擎仅通过文件工具应用 Patch，然后执行 `git diff` 和 `mvn test`。失败输出会转换为 `StructuredError` 并进入下一轮修复。
+`examples/sample-user-service` 是一个可独立测试的示例服务。真实模型返回结构化 `WorkspaceAction`，按需调用 `LIST_FILES`、`SEARCH_FILES`、`READ_FILE`、`APPLY_CHANGES`，收到工具结果后继续下一步。`APPLY_CHANGES` 使用已有 `ChangeProposal`，支持创建文件和精确 Patch；已有文件必须先读取。模型返回 `FINISH` 后，引擎执行 `git diff` 和 `mvn test`。失败输出转换为 `StructuredError`，下一轮重新读取修改后的文件。
+
+每轮最多 40 个工具步骤，达到上限会以 `CONTEXT_LIMIT_REACHED` 停止；单次列出/搜索最多 200 条结果，单次读取最多 400 行 / 24,000 字符，文本文件大小上限 1 MiB。截断结果会提示缩小搜索范围或继续读取后续行。默认跳过 `.git`、快照、构建产物和依赖目录；不将源码保存到索引库，修改前的原文件仍保留在 `.agent-snapshots` 用于回滚。
 
 ## 安全边界
 
 - 所有文件路径必须位于仓库根目录内。
-- 拒绝路径穿越、外部符号链接以及 `.env`、私钥等敏感文件。
+- 拒绝绝对路径、路径穿越、符号链接以及 `.env`、私钥、`.git` 和快照等敏感路径的模型访问。
 - 命令执行采用白名单，只允许 Maven、Maven Wrapper、只读 Git 命令和 `java -version`。
-- 构建文件、数据库迁移、鉴权逻辑或超过十个文件的变更需要人工确认。
+- 构建文件、数据库迁移、鉴权逻辑或同一任务累计超过十个文件的变更需要人工确认。
 - Trace 会对 Key、Token、Password、Secret 和 Authorization 等字段脱敏。
 
 ## 测试范围
 
-项目包含 AST/RAG、状态机、自动修复策略、路径穿越防护、命令白名单、文件回滚、Trace 和 JWT 等测试。未配置 API Key 时不会访问模型；依赖外部服务的 Testcontainers 测试可在 Docker 可用时运行。
+项目包含实时文件搜索/读取、工具循环、修改后重读、失败 Patch 恢复、风险确认、状态机、自动修复策略、路径防护、文件快照、Trace 和 JWT 等测试；独立 AST/RAG 库测试也保留。未配置 API Key 时不会访问模型；依赖外部服务的 Testcontainers 测试可在 Docker 可用时运行。
 
 前端回归测试使用 Node.js 18+ 内置测试运行器，无需安装 npm 依赖，覆盖主题持久化、异步表单提交、登录失效和任务轮询：
 
@@ -195,7 +199,6 @@ node --test coding-agent-bootstrap/src/test/javascript/app.test.cjs
 
 ## 后续计划
 
-- Milvus 原生 SDK 批量写入
 - RocketMQ 消费者弹性扩缩容
 - Prometheus / Grafana Dashboard
 - 更多编程语言解析器

@@ -28,7 +28,7 @@ let pollVersion = 0;
 let pendingRefresh = null;
 const terminalStatuses = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'WAITING_CONFIRMATION', 'ROLLED_BACK']);
 const statusLabels = {PENDING: '等待执行', SCANNING: '扫描代码', INDEXING: '建立索引', PLANNING: '规划任务', RETRIEVING: '检索代码', EXECUTING: '执行中', REVIEWING: '检查变更', TESTING: '测试中', REPAIRING: '修复中', SUCCEEDED: '已完成', FAILED: '执行失败', CANCELLED: '已取消', WAITING_CONFIRMATION: '等待确认', ROLLED_BACK: '已回滚'};
-const traceLabels = {REPOSITORY_SCANNED: '仓库扫描完成', INDEX_COMPLETED: '索引建立完成', PLAN_CREATED: '任务计划已生成', DIFF_REVIEWED: '变更检查完成', TEST_PASSED: '测试通过', TEST_FAILED: '测试失败', FILE_CHANGED: '文件变更', WAITING_CONFIRMATION: '等待确认'};
+const traceLabels = {REPOSITORY_SCANNED: '仓库扫描完成', INDEX_COMPLETED: '索引建立完成', PLAN_CREATED: '任务计划已生成', WORKSPACE_TOOL: '工作区文件操作', TOOL_FAILED: '文件操作失败', DIFF_REVIEWED: '变更检查完成', TEST_PASSED: '测试通过', TEST_FAILED: '测试失败', FILE_CHANGED: '文件变更', WAITING_CONFIRMATION: '等待确认'};
 class StaleRequest extends Error {}
 
 function notice(message, error = false) {
