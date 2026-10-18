@@ -4,8 +4,8 @@
 
 ## 核心能力
 
-- **直接操作代码**：模型根据工具反馈循环选择列文件、文本搜索、按行读取、创建文件或精确替换，无需预先切片和入库，支持 Java 及其他 UTF-8 文本文件。
-- **实时上下文**：每次工具调用都读取当前工作区，修复轮次重新获取文件内容；JavaParser 和旧 RAG 模块作为独立库保留，主执行链路不再依赖它们。
+- **代码上下文构建与直接操作**：通过文件列表、关键词搜索和按行读取实时获取仓库代码，由 Agent 根据工具反馈动态构建上下文，直接执行文件创建与精确补丁修改，并结合测试结果重新读取代码、迭代修复。
+- **实时文件反馈**：支持 Java 及其他 UTF-8 文本文件；搜索和读取工具返回当前文件内容，修改工具返回实际执行结果。每轮修复重新获取工作区上下文，避免继续使用修改前的代码片段。
 - **工具调用**：统一使用结构化 `ToolResult`，提供受控文件读写、局部 Patch、只读 Git/Maven 命令和任务快照。
 - **自动修复**：测试失败后解析结构化错误，重新搜索、读取、修改并测试；支持最大轮次、重复错误、无效变更和工具步数等停止条件。
 - **执行追踪**：以 `traceId`、`taskId` 和 `sessionId` 关联计划、工具、文件、测试与修复事件，不保存模型隐藏推理。
@@ -47,7 +47,7 @@ stateDiagram-v2
 | --- | --- |
 | `coding-agent-bootstrap` | 应用启动、Bean 装配、JWT/Security、Metrics 和配置 |
 | `coding-agent-api` | REST、SSE、DTO、参数校验与异常处理 |
-| `coding-agent-core` | Supervisor、规划/编码模型、状态机和自动修复 |
+| `coding-agent-core` | Supervisor、任务规划、文件工具调用循环、动态上下文、状态机和自动修复 |
 | `coding-agent-analysis` | 独立的 Maven 扫描与 JavaParser 分析库，主流程不依赖 |
 | `coding-agent-rag` | 保留的旧索引/检索库，主流程不依赖 |
 | `coding-agent-tools` | 实时列文件、文本搜索、按行读取、安全修改、Git、Maven、快照和回滚工具 |
@@ -61,10 +61,11 @@ stateDiagram-v2
 - Spring Boot 3.4
 - Maven 多模块工程
 - LangChain4j / OpenAI Compatible API
-- JavaParser
-- MySQL、Redis、Milvus、RocketMQ
+- MySQL、Redis、RocketMQ（可选基础设施适配）
 - JWT、Spring Security、Springdoc OpenAPI
 - JUnit 5、Testcontainers
+
+JavaParser 仅用于保留的独立分析库；旧 RAG 模块和 Milvus 部署配置也保留。当前 Agent 主流程及应用发布包不依赖 AST/RAG 模块，代码上下文构建不需要代码切片、向量入库或 Milvus 检索。
 
 ## 快速开始
 
