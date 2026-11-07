@@ -15,6 +15,15 @@ final class WorkspaceSession {
  private final FileTools files;
  private final WorkspaceTools workspace;
  private final BiConsumer<String, String> trace;
+ private List<String> latestObservations = List.of();
+ List<String> observations() {
+  var evidence = new ArrayList<>(latestObservations);
+  for (Path path : changedPaths.stream().sorted().toList()) {
+   String relative = guard.root().relativize(path).toString();
+   evidence.add("Current changed file " + relative + ": " + files.read(relative, null, null));
+  }
+  return List.copyOf(evidence);
+ }
  private final Set<Path> changedPaths = new HashSet<>();
 
  WorkspaceSession(CodingModel model, WorkspaceGuard guard, FileTools files, BiConsumer<String, String> trace) {
@@ -23,7 +32,7 @@ final class WorkspaceSession {
  }
 
  Outcome run(TaskPlan plan, StructuredError error) {
-  List<String> observations = new ArrayList<>(); Set<Path> readPaths = new HashSet<>();
+  List<String> observations = new ArrayList<>(); latestObservations = observations; Set<Path> readPaths = new HashSet<>();
   observe(observations, "LIST_FILES", ".", workspace.list(".", null));
   if (plan.filesToRead() != null) for (String path : plan.filesToRead().stream().limit(20).toList()) {
    ToolResult<String> result = files.read(path, null, null);

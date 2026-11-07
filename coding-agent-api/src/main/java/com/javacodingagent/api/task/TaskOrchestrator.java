@@ -64,6 +64,7 @@ public class TaskOrchestrator {
 
  private String message(AgentStopReason reason) {
   return switch (reason) {
+   case COMPLETION_VERIFIED -> "任务已完成，测试及模型需求校验均通过。";
    case TEST_PASSED -> "任务已完成，仓库测试通过。";
    case MAX_REPAIR_ATTEMPTS_REACHED -> "测试未通过，已达到最大修复次数。";
    case SAME_ERROR_REPEATED -> "重复出现相同错误，任务已停止。";

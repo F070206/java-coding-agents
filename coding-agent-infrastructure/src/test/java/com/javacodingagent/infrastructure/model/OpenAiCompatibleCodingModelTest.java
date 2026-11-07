@@ -40,6 +40,14 @@ class OpenAiCompatibleCodingModelTest {
      """);
    var change = model.nextAction(plan, List.of("READ_FILE OK: old"), null);
    assertEquals(WorkspaceAction.Type.APPLY_CHANGES, change.type()); assertEquals("new", change.proposal().edits().get(0).replacement());
+   reply.set("{\"completed\":false,\"summary\":\"Missing implementation\",\"unmetRequirements\":[\"Add requested validation\"]}");
+   var review = model.reviewCompletion("original goal", plan, List.of("Maven tests passed", "actual diff"));
+   assertFalse(review.completed()); assertEquals(List.of("Add requested validation"), review.unmetRequirements());
+   prompt = mapper.readTree(request.get()).path("messages").toString();
+   assertTrue(prompt.contains("original goal")); assertTrue(prompt.contains("actual diff"));
+   assertTrue(prompt.contains("Passing tests alone is insufficient"));
+   reply.set("{\"summary\":\"No verdict\",\"unmetRequirements\":[]}");
+   assertThrows(IllegalStateException.class, () -> model.reviewCompletion("goal", plan, List.of()));
    reply.set("not a structured action");
    assertEquals("MODEL_DECISION_FAILED", assertThrows(IllegalStateException.class, () -> model.nextAction(plan, List.of(), null)).getMessage());
   } finally { server.stop(0); }

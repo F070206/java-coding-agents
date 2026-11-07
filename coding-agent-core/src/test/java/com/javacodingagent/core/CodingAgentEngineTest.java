@@ -24,6 +24,11 @@ class CodingAgentEngineTest {
   Files.writeString(root.resolve("README.md"), "value=old\n");
   var step = new AtomicInteger(); var tests = new AtomicInteger(); var traces = new InMemoryTraceStore();
   var model = new DeterministicCodingModel() {
+   @Override public TaskPlan mergePlans(String requirement, List<TaskPlan> plans) { assertEquals(3, plans.size()); return plans.get(0); }
+   @Override public CompletionReview reviewCompletion(String requirement, TaskPlan plan, List<String> evidence) {
+    assertTrue(String.join("\n", evidence).contains("value=fixed"));
+    return new CompletionReview(true, "Requirement implemented", List.of());
+   }
    @Override public TaskPlan plan(String requirement, List<String> observations) {
     assertTrue(observations.get(0).contains("README.md"));
     assertFalse(observations.get(0).contains("value=old"));
@@ -75,4 +80,49 @@ class CodingAgentEngineTest {
   var result = engine.execute(context(), "inspect", 0);
   assertEquals(AgentTaskStatus.FAILED, result.status()); assertEquals(AgentStopReason.CONTEXT_LIMIT_REACHED, result.stopReason());
  }
+ @Test void mergesThreeAnalysesAndRepairsRejectedCompletion() throws Exception {
+  var analyses = new AtomicInteger(); var merges = new AtomicInteger(); var reviews = new AtomicInteger();
+  var model = new DeterministicCodingModel() {
+   @Override public TaskPlan plan(String requirement, List<String> evidence) { analyses.incrementAndGet(); return super.plan(requirement, evidence); }
+   @Override public TaskPlan mergePlans(String requirement, List<TaskPlan> plans) {
+    assertEquals(3, plans.size()); merges.incrementAndGet(); return plans.get(0);
+   }
+   @Override public WorkspaceAction nextAction(TaskPlan plan, List<String> observations, StructuredError error) {
+    if (reviews.get() > 0) { assertEquals("INCOMPLETE_REQUIREMENT", error.errorType()); assertTrue(error.recommendedFix().contains("missing acceptance")); }
+    return new WorkspaceAction(WorkspaceAction.Type.FINISH, null, null, null, null, null);
+   }
+   @Override public CompletionReview reviewCompletion(String requirement, TaskPlan plan, List<String> evidence) {
+    assertEquals("original requirement", requirement);
+    assertTrue(String.join("\n", evidence).contains("Maven test result"));
+    return reviews.getAndIncrement() == 0
+      ? new CompletionReview(false, "Incomplete", List.of("missing acceptance"))
+      : new CompletionReview(true, "All requirements verified", List.of());
+   }
+  };
+  var engine = new CodingAgentEngine(model, new InMemoryTraceStore(), guard -> passingCommands(guard));
+  var result = engine.execute(context(), "original requirement", 1);
+  assertEquals(AgentTaskStatus.SUCCEEDED, result.status());
+  assertEquals(AgentStopReason.COMPLETION_VERIFIED, result.stopReason());
+  assertEquals(3, analyses.get()); assertEquals(1, merges.get()); assertEquals(2, reviews.get());
+ }
+
+ @Test void passingTestsCannotApproveCompletionWithoutAModelReviewer() throws Exception {
+  var engine = new CodingAgentEngine(new DeterministicCodingModel(), new InMemoryTraceStore(), guard -> passingCommands(guard));
+  var result = engine.execute(context(), "implement feature", 0);
+  assertEquals(AgentTaskStatus.FAILED, result.status());
+ }
+
+ @Test void rejectsContradictoryOrMissingCompletionVerdicts() {
+  assertThrows(IllegalArgumentException.class, () -> new CompletionReview(null, "missing", List.of()));
+  assertThrows(IllegalArgumentException.class, () -> new CompletionReview(true, "contradictory", List.of("missing feature")));
+ }
+
+ private CommandTools passingCommands(WorkspaceGuard guard) {
+  return new CommandTools(guard, Duration.ofSeconds(1)) {
+   @Override public ToolResult<Map<String, Object>> execute(String command) {
+    return ToolResult.success("CommandTool", "completed", Map.of("exitCode", 0, "output", command), System.currentTimeMillis());
+   }
+  };
+ }
+
 }

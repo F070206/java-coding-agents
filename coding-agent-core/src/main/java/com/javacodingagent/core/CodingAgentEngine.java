@@ -43,7 +43,14 @@ public class CodingAgentEngine {
   if (!inventory.success()) throw new IllegalStateException(inventory.errorCode());
   trace(context, "REPOSITORY_SCANNED", inventory.summary());
   transition.accept(AgentTaskStatus.PLANNING);
-  TaskPlan plan = model.plan(requirement, List.of("Live workspace files (no code index): " + inventory.summary() + "\n" + inventory.data()));
+  var candidates = new ArrayList<TaskPlan>();
+  for (int analysis = 0; analysis < 3; analysis++) {
+   TaskPlan candidate = model.plan(requirement, List.of("Live workspace files (no code index): " + inventory.summary() + "\n" + inventory.data()));
+   if (candidate == null) throw new IllegalStateException("MODEL_DECISION_FAILED");
+   candidates.add(candidate);
+   trace(context, "PLAN_ANALYZED", "Analysis " + (analysis + 1) + ": " + candidate);
+  }
+  TaskPlan plan = model.mergePlans(requirement, List.copyOf(candidates));
   if (plan == null) throw new IllegalStateException("MODEL_DECISION_FAILED");
   trace(context, "PLAN_CREATED", plan.toString());
   var session = new WorkspaceSession(model, guard, fileTools, (type, summary) -> trace(context, type, summary));
@@ -68,10 +75,21 @@ public class CodingAgentEngine {
    int exit = test.success() && test.data() != null ? (Integer)test.data().get("exitCode") : -1;
    trace(context, exit == 0 ? "TEST_PASSED" : "TEST_FAILED", test.summary());
    if (exit == 0) {
-    transition.accept(AgentTaskStatus.SUCCEEDED);
-    return new Result(context.getTaskStatus(), AgentStopReason.TEST_PASSED, plan);
+    var evidence = new ArrayList<>(session.observations());
+    evidence.add("Git diff result: " + diff);
+    evidence.add("Maven test result: " + test);
+    CompletionReview review = model.reviewCompletion(requirement, plan, List.copyOf(evidence));
+    if (review == null) throw new IllegalStateException("MODEL_DECISION_FAILED");
+    trace(context, review.completed() ? "COMPLETION_VERIFIED" : "COMPLETION_REJECTED", review.toString());
+    if (review.completed()) {
+     transition.accept(AgentTaskStatus.SUCCEEDED);
+     return new Result(context.getTaskStatus(), AgentStopReason.COMPLETION_VERIFIED, plan);
+    }
+    error = new StructuredError("INCOMPLETE_REQUIREMENT", null, null, null, review.summary(),
+      String.join("\n", review.unmetRequirements()), true);
+   } else {
+    error = model.analyzeError(test.success() ? String.valueOf(test.data()) : test.errorCode() + ": " + test.errorMessage());
    }
-   error = model.analyzeError(test.success() ? String.valueOf(test.data()) : test.errorCode() + ": " + test.errorMessage());
    var decision = policy.evaluate(round, Integer.toHexString(error.hashCode()), String.valueOf(diff.data()).hashCode() + "", false, false, false);
    if (!decision.continueRepair()) {
     transition.accept(AgentTaskStatus.FAILED);

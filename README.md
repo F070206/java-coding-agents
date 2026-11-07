@@ -35,7 +35,7 @@ stateDiagram-v2
   EXECUTING --> EXECUTING: list / search / read / edit
   EXECUTING --> REVIEWING
   REVIEWING --> TESTING
-  TESTING --> SUCCEEDED: tests pass
+  TESTING --> SUCCEEDED: tests pass and model verifies completion
   TESTING --> REPAIRING: tests fail
   REPAIRING --> REVIEWING: fresh file tools
   EXECUTING --> WAITING_CONFIRMATION: risky change
@@ -111,7 +111,7 @@ Windows 下也可以双击根目录的 `start.cmd` 一键构建并启动；首�
 
 若要从另一个窗口关闭已启动的应用，双击根目录的 `stop.cmd`。脚本只会停止监听配置端口且命令行匹配本项目 JAR 的 Java 进程；停止结果会保留在独立命令窗口中。
 
-脚本会强制清空模型地址和模型名称，因此始终使用确定性离线模型，不向模型服务发送请求。启动后访问 `http://localhost:8080/`，使用 `.env` 中的管理员账号登录，添加本机已存在的仓库路径，再提交任务查看测试结果和轨迹。离线模型不会提出文件修改；任务会对所选仓库执行 `mvn test`。仓库与任务记录当前保存在内存中，重启后需要重新添加。
+脚本会强制清空模型地址和模型名称，因此始终使用确定性离线模型，不向模型服务发送请求。启动后访问 `http://localhost:8080/`，使用 `.env` 中的管理员账号登录，添加本机已存在的仓库路径，再提交任务查看测试结果和轨迹。离线模型不会提出文件修改；任务会对所选仓库执行 `mvn test`，但无法完成模型需求校验，因此不会标记成功。仓库与任务记录当前保存在内存中，重启后需要重新添加。
 
 侧栏底部的“界面主题”支持浅色、深色和跟随系统，登录前后均可切换。主题选择保存在当前浏览器中，刷新后保留；跟随系统会响应系统外观变化。浏览器禁用本地存储时，仍可在当前页面切换主题。
 
@@ -172,7 +172,7 @@ curl -X POST http://localhost:8080/api/agent/tasks \
 
 ## 自动修复示例
 
-`examples/sample-user-service` 是一个可独立测试的示例服务。真实模型返回结构化 `WorkspaceAction`，按需调用 `LIST_FILES`、`SEARCH_FILES`、`READ_FILE`、`APPLY_CHANGES`，收到工具结果后继续下一步。`APPLY_CHANGES` 使用已有 `ChangeProposal`，支持创建文件和精确 Patch；已有文件必须先读取。模型返回 `FINISH` 后，引擎执行 `git diff` 和 `mvn test`。失败输出转换为 `StructuredError`，下一轮重新读取修改后的文件。
+`examples/sample-user-service` 是一个可独立测试的示例服务。真实模型返回结构化 `WorkspaceAction`，按需调用 `LIST_FILES`、`SEARCH_FILES`、`READ_FILE`、`APPLY_CHANGES`，收到工具结果后继续下一步。`APPLY_CHANGES` 使用已有 `ChangeProposal`，支持创建文件和精确 Patch；已有文件必须先读取。规划阶段进行三次独立模型分析拆解，并由模型合并为一个执行计划。模型返回 `FINISH` 后，引擎执行 `git diff` 和 `mvn test`。测试通过后，另一次模型调用会根据原始需求、合并计划、工具执行记录、Git Diff 和测试结果校验完成情况；只有测试和完成校验均通过才标记成功。校验不通过会将缺失项反馈至现有修复循环，仍受最大修复次数等停止条件限制。失败输出转换为 `StructuredError`，下一轮重新读取修改后的文件。
 
 每轮最多 40 个工具步骤，达到上限会以 `CONTEXT_LIMIT_REACHED` 停止；单次列出/搜索最多 200 条结果，单次读取最多 400 行 / 24,000 字符，文本文件大小上限 1 MiB。截断结果会提示缩小搜索范围或继续读取后续行。默认跳过 `.git`、快照、构建产物和依赖目录；不将源码保存到索引库，修改前的原文件仍保留在 `.agent-snapshots` 用于回滚。
 
